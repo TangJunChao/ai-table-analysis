@@ -23,6 +23,7 @@
 # misc
 .DS_Store
 *.pem
+~$*
 
 # debug
 npm-debug.log*
@@ -32,6 +33,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +41,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# prisma (local sqlite)
+/prisma/*.db
+/prisma/*.db-journal
+
+# local row-data files (dev object storage)
+/data/

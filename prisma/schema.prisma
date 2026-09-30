@@ -1,0 +1,159 @@
+// Prisma Schema —— AI 表格分析 MVP
+// 由 PostgreSQL DDL 转换而来；当前使用 SQLite 本地持久化
+// 迁移到 Postgres：把 datasource.provider 改为 "postgresql"，
+// 并把 DATABASE_URL 换成 Postgres 连接串即可（Json/cuid 均兼容）。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- 用户 ----------
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  projects        Project[]
+  conversations   Conversation[]
+  analysisQueries AnalysisQuery[]
+  charts          Chart[]
+  dataSources     DataSource[]
+
+  @@map("users")
+}
+
+// ---------- 项目（数据集容器） ----------
+model Project {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  datasets Dataset[]
+
+  @@index([userId])
+  @@map("projects")
+}
+
+// ---------- 数据集（上传的文件 + 元信息） ----------
+model Dataset {
+  id         String   @id @default(cuid())
+  projectId  String   @map("project_id")
+  name       String
+  sourceType String   @default("csv") @map("source_type") // csv / xlsx / json
+  filePath   String   @map("file_path") // 行数据文件（本地 data/ 目录，替代对象存储）
+  status     String   @default("ready") // processing / ready / failed
+  rowCount   Int      @default(0) @map("row_count")
+  schema     Json?    @map("schema_json") // 列元信息快照
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  columns       DatasetColumn[]
+  conversations Conversation[]
+  analysisQueries AnalysisQuery[]
+  charts        Chart[]
+
+  @@index([projectId])
+  @@map("datasets")
+}
+
+// ---------- 数据列（类型推断 + 统计，供 AI 提示词） ----------
+model DatasetColumn {
+  id        String  @id @default(cuid())
+  datasetId String  @map("dataset_id")
+  name      String
+  dataType  String  @map("data_type") // string / number / date / boolean
+  nullable  Boolean @default(true)
+  position  Int
+  stats     Json?   @map("stats_json") // min/max/unique/空值率 等
+
+  dataset Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@unique([datasetId, position])
+  @@index([datasetId])
+  @@map("dataset_columns")
+}
+
+// ---------- AI 会话（多轮问数的上下文） ----------
+model Conversation {
+  id        String   @id @default(cuid())
+  datasetId String   @map("dataset_id")
+  userId    String   @map("user_id")
+  title     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  dataset Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  queries AnalysisQuery[]
+
+  @@index([datasetId])
+  @@map("conversations")
+}
+
+// ---------- 问数记录（一条 = 一次 AI 问答） ----------
+model AnalysisQuery {
+  id             String   @id @default(cuid())
+  conversationId String?  @map("conversation_id")
+  datasetId      String   @map("dataset_id")
+  userId         String   @map("user_id")
+  question       String
+  sql            String?
+  resultColumns  Json?    @map("result_columns")
+  resultPreview  Json?    @map("result_preview") // 前 N 行结果
+  status         String   @default("pending") // pending / running / success / failed
+  errorMessage   String?  @map("error_message")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  dataset      Dataset       @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([datasetId])
+  @@index([conversationId])
+  @@map("analysis_queries")
+}
+
+// ---------- 图表（AI 生成或用户创建，存 ECharts 配置） ----------
+model Chart {
+  id        String   @id @default(cuid())
+  datasetId String   @map("dataset_id")
+  userId    String   @map("user_id")
+  title     String?
+  chartType String   @map("chart_type") // bar / line / pie / ...
+  config    Json     @map("config_json") // ECharts option
+  createdAt DateTime @default(now()) @map("created_at")
+
+  dataset Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([datasetId])
+  @@map("charts")
+}
+
+// ---------- 数据源连接（直连 Postgres / MySQL / SQLite） ----------
+model DataSource {
+  id        String   @id @default(cuid())
+  name      String
+  type      String   // postgres / mysql / sqlite
+  url       String   // 连接串（MVP 明文存储，生产需加密或改用凭据服务）
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("data_sources")
+}
